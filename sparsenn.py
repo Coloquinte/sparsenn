@@ -7,7 +7,7 @@ import math
 class _SparseLayer(nn.Module):
     def __init__(self):
         super(_SparseLayer, self).__init__()
-        self.optimized = False
+        self.debug = True
         
     def weight(self):
         raise NotImplementedError()
@@ -18,74 +18,21 @@ class _SparseLayer(nn.Module):
     def forward_optimized(self, x):
         raise NotImplementedError()
     
-    def forward_unoptimized(self, x):
+    def forward_debug(self, x):
         raise NotImplementedError()
         
     def forward(self, x):
-        if self.optimized:
-            return self.forward_optimized(x)
+        if self.debug:
+            return self.forward_debug(x)
         else:
-            return self.forward_unoptimized(x)
+            return self.forward_optimized(x)
+            
 
-
-class _SparseLinear(_SparseLayer):
-    def __init__(self, in_features, out_features):
-        super(_SparseLinear, self).__init__()
+class HypercubeLinear(_SparseLayer):
+    def __init__(self, in_features, out_features, hdim, bias=True):
+        super(HypercubeLinear, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
-    
-    def forward_unoptimized(self, x):
-        return F.linear(x, self.weight(), self.bias())
-
-        
-class _SparseConv1d(_SparseLayer):
-    def __init__(self, in_channels, out_channels, stride, padding, dilation):
-        super(_SparseConv1d, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.stride = stride
-        self.padding = padding
-        self.dilation = dilation
-    
-    def forward_unoptimized(self, x):
-        return torch.nn.functional.conv1d(
-            x, self.weight(), self.bias(),
-            self.stride, self.padding, self.dilation)
-
-
-class _SparseConv2d(_SparseLayer):
-    def __init__(self, in_channels, out_channels, stride, padding, dilation):
-        super(_SparseConv2d, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.stride = stride
-        self.padding = padding
-        self.dilation = dilation
-    
-    def forward_unoptimized(self, x):
-        return torch.nn.functional.conv2d(
-            x, self.weight(), self.bias(),
-            self.stride, self.padding, self.dilation)
-
-        
-class _SparseConv3d(_SparseLayer):
-    def __init__(self, in_channels, out_channels, stride, padding, dilation):
-        super(_SparseConv3d, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.stride = stride
-        self.padding = padding
-        self.dilation = dilation
-    
-    def forward_unoptimized(self, x):
-        return torch.nn.functional.conv3d(
-            x, self.weight(), self.bias(),
-            self.stride, self.padding, self.dilation)
-
-
-class HypercubeLinear(_SparseLinear):
-    def __init__(self, in_features, out_features, hdim, bias=True):
-        super(HypercubeLinear, self).__init__(in_features, out_features)
         assert hdim >= 2
         assert in_features % 2**hdim == 0
         assert out_features % 2**hdim == 0
@@ -124,20 +71,23 @@ class HypercubeLinear(_SparseLinear):
     def bias(self):
         return self._hbias
 
+    def forward_debug(self, x):
+        return F.linear(x, self.weight(), self.bias())
     
-class HypercubeConv1D(_SparseConv1d):
+    
+class HypercubeConv1D(_SparseLayer):
     pass
 
     
-class HypercubeConv2D(_SparseConv2d):
+class HypercubeConv2D(_SparseLayer):
+    pass
+    
+    
+class HypercubeConv3D(_SparseLayer):
     pass
 
     
-class HypercubeConv3D(_SparseConv3d):
-    pass
-
-    
-class KroneckerLinear(_SparseLinear):
+class KroneckerLinear(_SparseLayer):
     def __init__(
         self,
         in_features,
@@ -145,8 +95,9 @@ class KroneckerLinear(_SparseLinear):
         kronecker_shapes,
         bias=True
         ):
-        super(KroneckerLinear, self).__init__(
-            in_features, out_features)
+        super(KroneckerLinear, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
         self.kronecker_shapes = kronecker_shapes
         self.factors = []
         for i, s in enumerate(self.kronecker_shapes):
@@ -165,9 +116,12 @@ class KroneckerLinear(_SparseLinear):
             
     def bias(self):
         return self._bias
+        
+    def forward_debug(self, x):
+        return F.linear(x, self.weight(), self.bias())
 
      
-class KroneckerConv1D(_SparseConv1d):
+class KroneckerConv1D(_SparseLayer):
     def __init__(
         self,
         in_channels,
@@ -179,9 +133,12 @@ class KroneckerConv1D(_SparseConv1d):
         dilation=1,
         bias=True
         ):
-        super(KroneckerConv1D, self).__init__(
-            in_channels, out_channels, kernel_size,
-            stride, padding, dilation)
+        super(KroneckerConv1D, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
         self.kronecker_shapes = kronecker_shapes
         self.factors = []
         for i, s in enumerate(self.kronecker_shapes):
@@ -201,8 +158,13 @@ class KroneckerConv1D(_SparseConv1d):
     def bias(self):
         return self._bias
         
+    def forward_debug(self, x):
+        return torch.nn.functional.conv1d(
+            x, self.weight(), self.bias(),
+            self.stride, self.padding, self.dilation)
     
-class KroneckerConv2D(_SparseConv2d):
+    
+class KroneckerConv2D(_SparseLayer):
     def __init__(
         self,
         in_channels,
@@ -214,9 +176,12 @@ class KroneckerConv2D(_SparseConv2d):
         dilation=1,
         bias=True
         ):
-        super(KroneckerConv2D, self).__init__(
-            in_channels, out_channels, kernel_size,
-            stride, padding, dilation)
+        super(KroneckerConv2D, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
         self.kronecker_shapes = kronecker_shapes
         self.factors = []
         for i, s in enumerate(self.kronecker_shapes):
@@ -236,8 +201,13 @@ class KroneckerConv2D(_SparseConv2d):
     def bias(self):
         return self._bias
 
+    def forward_debug(self, x):
+        return torch.nn.functional.conv2d(
+            x, self.weight(), self.bias(),
+            self.stride, self.padding, self.dilation)
     
-class KroneckerConv3D(_SparseConv3d):
+    
+class KroneckerConv3D(_SparseLayer):
     def __init__(
         self,
         in_channels,
@@ -249,9 +219,12 @@ class KroneckerConv3D(_SparseConv3d):
         dilation=1,
         bias=True
         ):
-        super(KroneckerConv3D, self).__init__(
-            in_channels, out_channels, kernel_size,
-            stride, padding, dilation)
+        super(KroneckerConv3D, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
         self.kronecker_shapes = kronecker_shapes
         self.factors = []
         for i, s in enumerate(self.kronecker_shapes):
@@ -270,3 +243,8 @@ class KroneckerConv3D(_SparseConv3d):
             
     def bias(self):
         return self._bias
+        
+    def forward_debug(self, x):
+        return torch.nn.functional.conv3d(
+            x, self.weight(), self.bias(),
+            self.stride, self.padding, self.dilation)
