@@ -8,54 +8,52 @@ class _SparseLayer(nn.Module):
     def __init__(self):
         super(_SparseLayer, self).__init__()
         self.debug = True
-        
+
     def weight(self):
         raise NotImplementedError()
-        
+
     def bias(self):
         raise NotImplementedError()
-        
+
     def forward_optimized(self, x):
         raise NotImplementedError()
-    
+
     def forward_debug(self, x):
         raise NotImplementedError()
-        
+
     def forward(self, x):
         if self.debug:
             return self.forward_debug(x)
         else:
             return self.forward_optimized(x)
-            
 
-class HypercubeLinear(_SparseLayer):
-    def __init__(self, in_features, out_features, hdim, bias=True):
-        super(HypercubeLinear, self).__init__()
-        self.in_features = in_features
-        self.out_features = out_features
+
+class _HypercubeLayer(_SparseLayer):
+    def __init__(self, hdim, shape, bias):
+        super(_HypercubeLayer, self).__init__()
         assert hdim >= 2
-        assert in_features % 2**hdim == 0
-        assert out_features % 2**hdim == 0
+        assert shape[0] % 2**hdim == 0
+        assert shape[1] % 2**hdim == 0
         self.hdim = hdim
-        self._hweight = nn.Parameter(torch.Tensor(
-            hdim+1, 2**hdim, out_features//2**hdim, in_features//2**hdim))
+        wshape = (hdim+1, 2**hdim, shape[0]//2**hdim, shape[1]//2**hdim) + shape[2:]
+        self._shape = shape
+        self._hweight = nn.Parameter(torch.Tensor(*wshape))
         if bias:
-            self._hbias = nn.Parameter(torch.Tensor(out_features))
+            self._hbias = nn.Parameter(torch.Tensor(shape[0]))
         else:
             self.register_parameter('_hbias', None)
         self.reset_parameters()
-    
+
     def reset_parameters(self):
         nn.init.kaiming_uniform_(self._hweight, a=math.sqrt(5))
         if self._hbias is not None:
-            bound = 1 / math.sqrt(self.in_features * (self.hdim+1))
+            bound = 1 / math.sqrt(self._hweight.shape[1] * (self.hdim+1))
             nn.init.uniform_(self._hbias, -bound, bound)
-        
+
     def weight(self):
         hdim = self.hdim
-        in_features = self.in_features
-        out_features = self.out_features
-        w = torch.zeros(2**hdim, 2**hdim, out_features//2**hdim, in_features//2**hdim)
+        shape = (2**hdim, 2**hdim) + self._hweight.shape[2:]
+        w = torch.zeros(shape)
         # Make diagonal
         for i in range(2**hdim):
             w[i, i] = self._hweight[0, i]
@@ -64,40 +62,116 @@ class HypercubeLinear(_SparseLayer):
             for d in range(hdim):
                 j = i ^ (1 << d)  # Neighbour on the hypercube
                 w[j, i] = self._hweight[d+1, i]
-        w = w.permute(0, 2, 1, 3)
-        w = w.reshape(out_features, in_features)
+        # Merge the 2**hdim dimensions with in/out dims
+        w = w.permute(0, 2, 1, 3, *range(4, 2+len(self._shape)))
+        w = w.reshape(self._shape)
         return w
-        
+
     def bias(self):
         return self._hbias
 
-    def forward_debug(self, x):
-        return F.linear(x, self.weight(), self.bias())
-    
-    
-class HypercubeConv1D(_SparseLayer):
-    pass
 
-    
-class HypercubeConv2D(_SparseLayer):
-    pass
-    
-    
-class HypercubeConv3D(_SparseLayer):
-    pass
-
-    
-class KroneckerLinear(_SparseLayer):
-    def __init__(
-        self,
-        in_features,
-        out_features,
-        kronecker_shapes,
-        bias=True
-        ):
-        super(KroneckerLinear, self).__init__()
+class HypercubeLinear(_HypercubeLayer):
+    def __init__(self, in_features, out_features, hdim, bias=True):
+        super(HypercubeLinear, self).__init__(hdim, (out_features, in_features), bias)
         self.in_features = in_features
         self.out_features = out_features
+
+    def forward_debug(self, x):
+        return F.linear(x, self.weight(), self.bias())
+
+
+class HypercubeConv1d(_HypercubeLayer):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        hdim,
+        stride=1,
+        padding=0,
+        dilation=1,
+        bias=True
+        ):
+        super(HypercubeConv1d, self).__init__(hdim, (out_channels, in_channels, kernel_size), bias)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+
+    def forward_debug(self, x):
+        return torch.nn.functional.conv1d(
+            x, self.weight(), self.bias(),
+            self.stride, self.padding, self.dilation)
+
+
+class HypercubeConv2d(_HypercubeLayer):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        hdim,
+        stride=1,
+        padding=0,
+        dilation=1,
+        bias=True
+        ):
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size, kernel_size)
+        super(HypercubeConv2d, self).__init__(hdim, (out_channels, in_channels, kernel_size[0], kernel_size[1]), bias)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+
+    def forward_debug(self, x):
+        return torch.nn.functional.conv2d(
+            x, self.weight(), self.bias(),
+            self.stride, self.padding, self.dilation)
+
+
+class HypercubeConv3d(_HypercubeLayer):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        hdim,
+        stride=1,
+        padding=0,
+        dilation=1,
+        bias=True
+        ):
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size, kernel_size, kernel_size)
+        super(HypercubeConv3d, self).__init__(hdim, (out_channels, in_channels, kernel_size[0], kernel_size[1], kernel_size[2]), bias)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+
+    def forward_debug(self, x):
+        return torch.nn.functional.conv3d(
+            x, self.weight(), self.bias(),
+            self.stride, self.padding, self.dilation)
+
+
+class _KroneckerLayer(_SparseLayer):
+    def __init__(
+        self,
+        shape,
+        kronecker_shapes,
+        bias
+        ):
+        super(_KroneckerLayer, self).__init__()
+        self._shape = shape
         self.kronecker_shapes = kronecker_shapes
         self.factors = []
         for i, s in enumerate(self.kronecker_shapes):
@@ -108,20 +182,33 @@ class KroneckerLinear(_SparseLayer):
             self._bias = nn.Parameter(torch.Tensor(out_features))
         else:
             self.register_parameter('_bias', None)
-    
+
     def weight(self):
-        w = torch.ones( (1, 1) )
-        for t in self.factors:
+        w = self.factors[0]
+        for t in self.factors[1:]:
             w = torch.kron(w, t)
-            
+
     def bias(self):
         return self._bias
-        
+
+
+class KroneckerLinear(_KroneckerLayer):
+    def __init__(
+        self,
+        in_features,
+        out_features,
+        kronecker_shapes,
+        bias=True
+        ):
+        super(KroneckerLinear, self).__init__((in_features, out_features), kronecker_shapes, bias)
+        self.in_features = in_features
+        self.out_features = out_features
+
     def forward_debug(self, x):
         return F.linear(x, self.weight(), self.bias())
 
-     
-class KroneckerConv1D(_SparseLayer):
+
+class KroneckerConv1d(_KroneckerLayer):
     def __init__(
         self,
         in_channels,
@@ -133,38 +220,21 @@ class KroneckerConv1D(_SparseLayer):
         dilation=1,
         bias=True
         ):
-        super(KroneckerConv1D, self).__init__()
+        super(KroneckerConv1d, self).__init__((in_channels, out_channels, kernel_size), kronecker_shapes, bias)
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
-        self.kronecker_shapes = kronecker_shapes
-        self.factors = []
-        for i, s in enumerate(self.kronecker_shapes):
-            p = nn.Parameter(torch.Tensor(s))
-            self.factors.append(p)
-            self.register_parameter(f"factor{i+1}", p)
-        if bias:
-            self._bias = nn.Parameter(torch.Tensor(out_channels))
-        else:
-            self.register_parameter('_bias', None)
-    
-    def weight(self):
-        w = torch.ones( (1, 1, 1) )
-        for t in self.factors:
-            w = torch.kron(w, t)
-            
-    def bias(self):
-        return self._bias
-        
+
     def forward_debug(self, x):
         return torch.nn.functional.conv1d(
             x, self.weight(), self.bias(),
             self.stride, self.padding, self.dilation)
-    
-    
-class KroneckerConv2D(_SparseLayer):
+
+
+class KroneckerConv2D(_KroneckerLayer):
     def __init__(
         self,
         in_channels,
@@ -176,38 +246,23 @@ class KroneckerConv2D(_SparseLayer):
         dilation=1,
         bias=True
         ):
-        super(KroneckerConv2D, self).__init__()
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size, kernel_size)
+        super(KroneckerConv2d, self).__init__((in_channels, out_channels, kernel_size[0], kernel_size[1]), kronecker_shapes, bias)
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
-        self.kronecker_shapes = kronecker_shapes
-        self.factors = []
-        for i, s in enumerate(self.kronecker_shapes):
-            p = nn.Parameter(torch.Tensor(s))
-            self.factors.append(p)
-            self.register_parameter(f"factor{i+1}", p)
-        if bias:
-            self._bias = nn.Parameter(torch.Tensor(out_channels))
-        else:
-            self.register_parameter('_bias', None)
-    
-    def weight(self):
-        w = torch.ones( (1, 1, 1, 1) )
-        for t in self.factors:
-            w = torch.kron(w, t)
-            
-    def bias(self):
-        return self._bias
 
     def forward_debug(self, x):
         return torch.nn.functional.conv2d(
             x, self.weight(), self.bias(),
             self.stride, self.padding, self.dilation)
-    
-    
-class KroneckerConv3D(_SparseLayer):
+
+
+class KroneckerConv3D(_KroneckerLayer):
     def __init__(
         self,
         in_channels,
@@ -219,31 +274,16 @@ class KroneckerConv3D(_SparseLayer):
         dilation=1,
         bias=True
         ):
-        super(KroneckerConv3D, self).__init__()
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size, kernel_size, kernel_size)
+        super(KroneckerConv3d, self).__init__((in_channels, out_channels, kernel_size[0], kernel_size[1]), kronecker_shapes, bias)
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
-        self.kronecker_shapes = kronecker_shapes
-        self.factors = []
-        for i, s in enumerate(self.kronecker_shapes):
-            p = nn.Parameter(torch.Tensor(s))
-            self.factors.append(p)
-            self.register_parameter(f"factor{i+1}", p)
-        if bias:
-            self._bias = nn.Parameter(torch.Tensor(out_channels))
-        else:
-            self.register_parameter('_bias', None)
-    
-    def weight(self):
-        w = torch.ones( (1, 1, 1, 1, 1) )
-        for t in self.factors:
-            w = torch.kron(w, t)
-            
-    def bias(self):
-        return self._bias
-        
+
     def forward_debug(self, x):
         return torch.nn.functional.conv3d(
             x, self.weight(), self.bias(),

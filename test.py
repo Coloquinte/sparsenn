@@ -4,7 +4,22 @@ import torch
 for hdim in range(2, 7):
     l = sparsenn.HypercubeLinear(in_features=2**hdim, out_features=2**hdim, hdim=hdim)
     assert (l.weight() != 0.0).sum().item() == (hdim+1) * 2**hdim
-    
+
+for hdim in range(2, 7):
+    kernel_size = 3
+    l = sparsenn.HypercubeConv1d(in_channels=2**hdim, out_channels=2**hdim, kernel_size=kernel_size, hdim=hdim)
+    assert (l.weight() != 0.0).sum().item() == (hdim+1) * 2**hdim * kernel_size
+
+for hdim in range(2, 7):
+    kernel_size = 3
+    l = sparsenn.HypercubeConv2d(in_channels=2**hdim, out_channels=2**hdim, kernel_size=kernel_size, hdim=hdim)
+    assert (l.weight() != 0.0).sum().item() == (hdim+1) * 2**hdim * kernel_size**2
+
+for hdim in range(2, 5):
+    kernel_size = 3
+    l = sparsenn.HypercubeConv3d(in_channels=2**hdim, out_channels=2**hdim, kernel_size=kernel_size, hdim=hdim)
+    assert (l.weight() != 0.0).sum().item() == (hdim+1) * 2**hdim * kernel_size**3
+
 
 # for s1 in range(2, 6):
     # for s2 in range(2, 6):
