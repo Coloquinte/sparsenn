@@ -21,6 +21,15 @@ class _SparseLayer(nn.Module):
     def forward_debug(self, x):
         raise NotImplementedError()
 
+    def dense_size(self):
+        raise NotImplementedError()
+
+    def sparse_size(self):
+        raise NotImplementedError()
+
+    def sparsity(self):
+        return self.sparse_size() / self.dense_size()
+
     def forward(self, x):
         if self.debug:
             return self.forward_debug(x)
@@ -45,10 +54,22 @@ class _HypercubeLayer(_SparseLayer):
         self.reset_parameters()
 
     def reset_parameters(self):
-        nn.init.kaiming_uniform_(self._hweight, a=math.sqrt(5))
+        # Matches the default Pytorch initialization for convolutions and grouped convolutions
+        # They are written with init.kaiming_uniform_, which obfuscates the true purpose a bit
+        fan_in = self._shape[1] * (self.hdim+1) // 2**self.hdim
+        bound = 1 / math.sqrt(fan_in)
+        nn.init.uniform_(self._hweight, -bound, bound)
         if self._hbias is not None:
-            bound = 1 / math.sqrt(self._hweight.shape[1] * (self.hdim+1))
             nn.init.uniform_(self._hbias, -bound, bound)
+
+    def dense_size(self):
+        s = 1
+        for i in self._shape:
+            s *= i
+        return s
+
+    def sparse_size(self):
+        return self._hweight.numel()
 
     def weight(self):
         hdim = self.hdim
@@ -179,9 +200,25 @@ class _KroneckerLayer(_SparseLayer):
             self.factors.append(p)
             self.register_parameter(f"factor{i+1}", p)
         if bias:
-            self._bias = nn.Parameter(torch.Tensor(out_features))
+            self._bias = nn.Parameter(torch.Tensor(shape[0]))
         else:
             self.register_parameter('_bias', None)
+
+    def reset_parameters(self):
+        # Difficult to get a good default here, as out parameters multiplied together
+        pass
+
+    def dense_size(self):
+        s = 1
+        for i in self._shape:
+            s *= i
+        return s
+
+    def sparse_size(self):
+        s = 1
+        for f in self.factors:
+            s *= f.numel()
+        return s
 
     def weight(self):
         w = self.factors[0]
