@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+import pdb
 
 
 class _SparseLayer(nn.Module):
@@ -40,12 +41,12 @@ class _SparseLayer(nn.Module):
 class _HypercubeLayer(_SparseLayer):
     def __init__(self, hdim, shape, bias):
         super(_HypercubeLayer, self).__init__()
-        assert hdim >= 2
+        assert hdim >= 1
         assert shape[0] % 2**hdim == 0
         assert shape[1] % 2**hdim == 0
         self.hdim = hdim
-        wshape = (hdim+1, 2**hdim, shape[0]//2**hdim, shape[1]//2**hdim) + shape[2:]
         self._shape = shape
+        wshape = ((hdim+1)*shape[0], shape[1]//2**hdim) + shape[2:]
         self._hweight = nn.Parameter(torch.Tensor(*wshape))
         if bias:
             self._hbias = nn.Parameter(torch.Tensor(shape[0]))
@@ -54,7 +55,7 @@ class _HypercubeLayer(_SparseLayer):
         self.reset_parameters()
 
     def reset_parameters(self):
-        # Matches the default Pytorch initialization for convolutions and grouped convolutions
+        # Matches the default Pytorch initialization for dense layers
         # They are written with init.kaiming_uniform_, which obfuscates the true purpose a bit
         fan_in = self._shape[1] * (self.hdim+1) // 2**self.hdim
         bound = 1 / math.sqrt(fan_in)
@@ -73,24 +74,37 @@ class _HypercubeLayer(_SparseLayer):
 
     def weight(self):
         hdim = self.hdim
-        shape = (2**hdim, 2**hdim) + self._hweight.shape[2:]
-        w = torch.zeros(shape)
+        s = self._shape
+        hweight = self._hweight.reshape(2**hdim, hdim+1, s[0]//2**hdim, s[1]//2**hdim, *s[2:])
+        out = torch.zeros(2**hdim, 2**hdim, s[0]//2**hdim, s[1]//2**hdim, *s[2:])
         # Make diagonal
-        for i in range(2**hdim):
-            w[i, i] = self._hweight[0, i]
+        for ind in range(2**hdim):
+            out[ind, ind] = hweight[ind, 0]
         # Make dimensions
-        for i in range(2**hdim):
+        for ind in range(2**hdim):
             for d in range(hdim):
-                j = i ^ (1 << d)  # Neighbour on the hypercube
-                w[j, i] = self._hweight[d+1, i]
+                out_ind = ind ^ (1 << d)  # Neighbour on the hypercube
+                out[out_ind, ind] = hweight[ind, d+1]
         # Merge the 2**hdim dimensions with in/out dims
-        w = w.permute(0, 2, 1, 3, *range(4, 2+len(self._shape)))
-        w = w.reshape(self._shape)
-        return w
+        out = out.permute(0, 2, 1, 3, *range(4, 2+len(s)))
+        out = out.reshape(s)
+        return out
 
     def bias(self):
         return self._hbias
 
+    def merge_hypercube(self, x):
+        hdim = self.hdim
+        s = self._shape
+        x = x.reshape(x.shape[0], 2**hdim, hdim+1, s[0]//2**hdim, *x.shape[2:])
+        out = x.clone()
+        for ind in range(2**hdim):
+            for d in range(hdim):
+                out_ind = ind ^ (1 << d)  # Neighbour on the hypercube
+                out[:, out_ind, d+1] = x[:, ind, d+1]
+        out = out.sum(axis=2).reshape(x.shape[0], s[0], *x.shape[4:])
+        return out
+        
 
 class HypercubeLinear(_HypercubeLayer):
     def __init__(self, in_features, out_features, hdim, bias=True):
@@ -117,7 +131,7 @@ class HypercubeConv1d(_HypercubeLayer):
         super(HypercubeConv1d, self).__init__(hdim, (out_channels, in_channels, kernel_size), bias)
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.kernel_size = kernel_size
+        self.kernel_size = (kernel_size,)
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
@@ -127,6 +141,12 @@ class HypercubeConv1d(_HypercubeLayer):
             x, self.weight(), self.bias(),
             self.stride, self.padding, self.dilation)
 
+    def forward_optimized(self, x):
+        # Grouped convolution to expand the number of channels
+        x = torch.nn.functional.conv1d(x, self._hweight, None,
+            stride=self.stride, padding=self.padding,
+            dilation=self.dilation, groups=2**self.hdim)
+        return self.merge_hypercube(x) + self._hbias.reshape(-1, 1)
 
 class HypercubeConv2d(_HypercubeLayer):
     def __init__(
