@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-import pdb
 
 
 class _SparseLayer(nn.Module):
@@ -104,7 +103,7 @@ class _HypercubeLayer(_SparseLayer):
                 out[:, out_ind, d+1] = x[:, ind, d+1]
         out = out.sum(axis=2).reshape(x.shape[0], s[0], *x.shape[4:])
         return out
-        
+
 
 class HypercubeLinear(_HypercubeLayer):
     def __init__(self, in_features, out_features, hdim, bias=True):
@@ -146,7 +145,9 @@ class HypercubeConv1d(_HypercubeLayer):
         x = torch.nn.functional.conv1d(x, self._hweight, None,
             stride=self.stride, padding=self.padding,
             dilation=self.dilation, groups=2**self.hdim)
+        # Reorganize the channels to where they belong and sum
         return self.merge_hypercube(x) + self._hbias.reshape(-1, 1)
+
 
 class HypercubeConv2d(_HypercubeLayer):
     def __init__(
@@ -175,6 +176,14 @@ class HypercubeConv2d(_HypercubeLayer):
             x, self.weight(), self.bias(),
             self.stride, self.padding, self.dilation)
 
+    def forward_optimized(self, x):
+        # Grouped convolution to expand the number of channels
+        x = torch.nn.functional.conv2d(x, self._hweight, None,
+            stride=self.stride, padding=self.padding,
+            dilation=self.dilation, groups=2**self.hdim)
+        # Reorganize the channels to where they belong and sum
+        return self.merge_hypercube(x) + self._hbias.reshape(-1, 1, 1)
+
 
 class HypercubeConv3d(_HypercubeLayer):
     def __init__(
@@ -202,6 +211,14 @@ class HypercubeConv3d(_HypercubeLayer):
         return torch.nn.functional.conv3d(
             x, self.weight(), self.bias(),
             self.stride, self.padding, self.dilation)
+
+    def forward_optimized(self, x):
+        # Grouped convolution to expand the number of channels
+        x = torch.nn.functional.conv3d(x, self._hweight, None,
+            stride=self.stride, padding=self.padding,
+            dilation=self.dilation, groups=2**self.hdim)
+        # Reorganize the channels to where they belong and sum
+        return self.merge_hypercube(x) + self._hbias.reshape(-1, 1, 1, 1)
 
 
 class _KroneckerLayer(_SparseLayer):
