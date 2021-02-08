@@ -121,7 +121,10 @@ class HypercubeLinear(_HypercubeLayer):
         input_shape = x.shape
         x = torch.nn.functional.conv1d(torch.unsqueeze(x, -1), self._hweight, None,
             groups=2**self.hdim)
-        return torch.squeeze(self.merge_hypercube(x), -1) + self._hbias
+        x = torch.squeeze(self.merge_hypercube(x), -1)
+        if self._hbias is not None:
+            x = x + self._hbias
+        return x
 
 
 class HypercubeConv1d(_HypercubeLayer):
@@ -155,7 +158,10 @@ class HypercubeConv1d(_HypercubeLayer):
             stride=self.stride, padding=self.padding,
             dilation=self.dilation, groups=2**self.hdim)
         # Reorganize the channels to where they belong and sum
-        return self.merge_hypercube(x) + self._hbias.reshape(-1, 1)
+        x = self.merge_hypercube(x)
+        if self._hbias is not None:
+            x = x + self._hbias.reshape(-1, 1)
+        return x
 
 
 class HypercubeConv2d(_HypercubeLayer):
@@ -191,7 +197,10 @@ class HypercubeConv2d(_HypercubeLayer):
             stride=self.stride, padding=self.padding,
             dilation=self.dilation, groups=2**self.hdim)
         # Reorganize the channels to where they belong and sum
-        return self.merge_hypercube(x) + self._hbias.reshape(-1, 1, 1)
+        x = self.merge_hypercube(x)
+        if self._hbias is not None:
+            x = x + self._hbias.reshape(-1, 1, 1)
+        return x
 
 
 class HypercubeConv3d(_HypercubeLayer):
@@ -227,4 +236,7 @@ class HypercubeConv3d(_HypercubeLayer):
             stride=self.stride, padding=self.padding,
             dilation=self.dilation, groups=2**self.hdim)
         # Reorganize the channels to where they belong and sum
-        return self.merge_hypercube(x) + self._hbias.reshape(-1, 1, 1, 1)
+        x = self.merge_hypercube(x)
+        if self._hbias is not None:
+            x = x + self._hbias.reshape(-1, 1, 1, 1)
+        return x
