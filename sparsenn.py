@@ -7,7 +7,7 @@ import math
 class _SparseLayer(nn.Module):
     def __init__(self):
         super(_SparseLayer, self).__init__()
-        self.debug = True
+        self.debug = False
 
     def weight(self):
         raise NotImplementedError()
@@ -107,12 +107,21 @@ class _HypercubeLayer(_SparseLayer):
 
 class HypercubeLinear(_HypercubeLayer):
     def __init__(self, in_features, out_features, hdim, bias=True):
-        super(HypercubeLinear, self).__init__(hdim, (out_features, in_features), bias)
+        super(HypercubeLinear, self).__init__(hdim, (out_features, in_features, 1), bias)
         self.in_features = in_features
         self.out_features = out_features
 
+    def weight(self):
+        return super().weight().reshape(self.out_features, self.in_features)
+
     def forward_debug(self, x):
         return F.linear(x, self.weight(), self.bias())
+
+    def forward_optimized(self, x):
+        input_shape = x.shape
+        x = torch.nn.functional.conv1d(torch.unsqueeze(x, -1), self._hweight, None,
+            groups=2**self.hdim)
+        return torch.squeeze(self.merge_hypercube(x), -1) + self._hbias
 
 
 class HypercubeConv1d(_HypercubeLayer):
