@@ -267,7 +267,7 @@ class _MaskedSparseLayer(_SparseLayer):
             self._bias = nn.Parameter(torch.Tensor(shape[0]))
         else:
             self.register_parameter('_bias', None)
-        self._mask = None
+        self._mask = nn.Parameter(torch.BoolTensor(*shape), requires_grad=False)
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -278,7 +278,6 @@ class _MaskedSparseLayer(_SparseLayer):
         nn.init.uniform_(self._weight, -bound, bound)
         if self._bias is not None:
             nn.init.uniform_(self._bias, -bound, bound)
-        self.init_mask()
 
     def init_mask(self):
         if self.sparse_filter:
@@ -287,9 +286,32 @@ class _MaskedSparseLayer(_SparseLayer):
             random_shape = self._shape[:2] + tuple(1 for i in self._shape[2:])
         random_mask = torch.bernoulli(torch.ones(random_shape) * self.sparsity)
         if self.sparse_filter:
-            self._mask = random_mask
+            self._mask.copy_(random_mask)
         else:
-            self._mask = random_mask.expand(-1, -1, *self._shape[2:])
+            self._mask.copy_(random_mask.expand(-1, -1, *self._shape[2:]))
+
+    def init_mask_hypercube(self, hdim):
+        s = self._shape
+        assert s[0] % 2**hdim == 0
+        assert s[1] % 2**hdim == 0
+        mask = torch.zeros(2**hdim, 2**hdim, s[0]//2**hdim, s[1]//2**hdim, *s[2:], dtype=torch.bool)
+        # Make diagonal
+        for ind in range(2**hdim):
+            mask[ind, ind] = 1
+        # Make dimensions
+        for ind in range(2**hdim):
+            for d in range(hdim):
+                out_ind = ind ^ (1 << d)  # Neighbour on the hypercube
+                mask[out_ind, ind] = 1
+        # Merge the 2**hdim dimensions with in/out dims
+        mask = mask.permute(0, 2, 1, 3, *range(4, 2+len(s)))
+        self._mask.copy_(mask.reshape(s))
+
+    def dense_size(self):
+        return self._weight.numel()
+
+    def sparse_size(self):
+        return self._mask.sum()
 
     def weight(self):
         return self._weight * self._mask
@@ -311,6 +333,19 @@ class SparseLinear(_MaskedSparseLayer):
         super(SparseLinear, self).__init__(sparsity, shape, bias, sparse_filter)
         self.in_features = in_features
         self.out_features = out_features
+        self.init_mask()
+
+    @staticmethod
+    def hypercube(
+        in_features,
+        out_features,
+        hdim,
+        bias=True
+        ):
+        sparsity = (hdim+1) / 2**hdim
+        l = SparseLinear(in_features, out_features, sparsity, bias, False)
+        l.init_mask_hypercube(hdim)
+        return l
 
     def forward_debug(self, x):
         return F.linear(x, self.weight(), self.bias())
@@ -340,6 +375,23 @@ class SparseConv1d(_MaskedSparseLayer):
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
+        self.init_mask()
+
+    @staticmethod
+    def hypercube(
+        in_channels,
+        out_channels,
+        kernel_size,
+        hdim,
+        stride=1,
+        padding=0,
+        dilation=1,
+        bias=True
+        ):
+        sparsity = (hdim+1) / 2**hdim
+        l = SparseConv1d(in_channels, out_channels, kernel_size, sparsity, stride, padding, dilation, bias, False)
+        l.init_mask_hypercube(hdim)
+        return l
 
     def forward_debug(self, x):
         return torch.nn.functional.conv1d(
@@ -373,6 +425,23 @@ class SparseConv2d(_MaskedSparseLayer):
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
+        self.init_mask()
+
+    @staticmethod
+    def hypercube(
+        in_channels,
+        out_channels,
+        kernel_size,
+        hdim,
+        stride=1,
+        padding=0,
+        dilation=1,
+        bias=True
+        ):
+        sparsity = (hdim+1) / 2**hdim
+        l = SparseConv2d(in_channels, out_channels, kernel_size, sparsity, stride, padding, dilation, bias, False)
+        l.init_mask_hypercube(hdim)
+        return l
 
     def forward_debug(self, x):
         return torch.nn.functional.conv2d(
@@ -381,6 +450,7 @@ class SparseConv2d(_MaskedSparseLayer):
 
     def forward_optimized(self, x):
         return self.forward_debug(x)
+
 
 class SparseConv3d(_MaskedSparseLayer):
     def __init__(
@@ -405,6 +475,23 @@ class SparseConv3d(_MaskedSparseLayer):
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
+        self.init_mask()
+
+    @staticmethod
+    def hypercube(
+        in_channels,
+        out_channels,
+        kernel_size,
+        hdim,
+        stride=1,
+        padding=0,
+        dilation=1,
+        bias=True
+        ):
+        sparsity = (hdim+1) / 2**hdim
+        l = SparseConv3d(in_channels, out_channels, kernel_size, sparsity, stride, padding, dilation, bias, False)
+        l.init_mask_hypercube(hdim)
+        return l
 
     def forward_debug(self, x):
         return torch.nn.functional.conv3d(
