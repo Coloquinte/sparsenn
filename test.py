@@ -71,7 +71,6 @@ for hdim in range(1, 5):
     in_size = 5 * 2**hdim
     out_size = 4 * 2**hdim
     l = sparsenn.HypercubeLinear(in_features=in_size, out_features=out_size, hdim=hdim)
-    #assert (l.weight() != 0.0).sum().item() == (hdim+1) * out_size * in_size // 2**hdim
     w, b = get_actual_params_linear(l)
     assert ((w - l.weight())**2).mean() <= 1.0e-6
     assert ((b - l.bias())**2).mean() <= 1.0e-6
@@ -81,7 +80,6 @@ for hdim in range(1, 5):
     out_size = 2 * 2**hdim
     kernel_size = 3
     l = sparsenn.HypercubeConv1d(in_channels=in_size, out_channels=out_size, kernel_size=kernel_size, hdim=hdim)
-    #assert (l.weight() != 0.0).sum().item() == (hdim+1) * 2**hdim * kernel_size
     w, b = get_actual_params_conv1d(l)
     assert ((w - l.weight())**2).mean() <= 1.0e-6
     assert ((b - l.bias())**2).mean() <= 1.0e-6
@@ -91,7 +89,6 @@ for hdim in range(1, 5):
     out_size = 3 * 2**hdim
     kernel_size = 3
     l = sparsenn.HypercubeConv2d(in_channels=in_size, out_channels=out_size, kernel_size=kernel_size, hdim=hdim)
-    #assert (l.weight() != 0.0).sum().item() == (hdim+1) * 2**hdim * kernel_size**2
     w, b = get_actual_params_conv2d(l)
     assert ((w - l.weight())**2).mean() <= 1.0e-6
     assert ((b - l.bias())**2).mean() <= 1.0e-6
@@ -101,7 +98,25 @@ for hdim in range(1, 4):
     out_size = 5 * 2**hdim
     kernel_size = 3
     l = sparsenn.HypercubeConv3d(in_channels=in_size, out_channels=out_size, kernel_size=kernel_size, hdim=hdim)
-    #assert (l.weight() != 0.0).sum().item() == (hdim+1) * 2**hdim * kernel_size**3
     w, b = get_actual_params_conv3d(l)
     assert ((w - l.weight())**2).mean() <= 1.0e-6
     assert ((b - l.bias())**2).mean() <= 1.0e-6
+
+in_size = 10
+out_size = 7
+l = sparsenn.SparseLinear(in_features=in_size, out_features=out_size, sparsity=0.2)
+w, b = get_actual_params_linear(l)
+assert ((w - l.weight())**2).mean() <= 1.0e-6
+assert ((b - l.bias())**2).mean() <= 1.0e-6
+l = sparsenn.SparseConv1d(in_channels=in_size, out_channels=out_size, kernel_size=kernel_size, sparsity=0.2)
+w, b = get_actual_params_conv1d(l)
+assert ((w - l.weight())**2).mean() <= 1.0e-6
+assert ((b - l.bias())**2).mean() <= 1.0e-6
+l = sparsenn.SparseConv2d(in_channels=in_size, out_channels=out_size, kernel_size=kernel_size, sparsity=0.2)
+w, b = get_actual_params_conv2d(l)
+assert ((w - l.weight())**2).mean() <= 1.0e-6
+assert ((b - l.bias())**2).mean() <= 1.0e-6
+l = sparsenn.SparseConv3d(in_channels=in_size, out_channels=out_size, kernel_size=kernel_size, sparsity=0.2)
+w, b = get_actual_params_conv3d(l)
+assert ((w - l.weight())**2).mean() <= 1.0e-6
+assert ((b - l.bias())**2).mean() <= 1.0e-6
