@@ -95,13 +95,17 @@ class _HypercubeLayer(_SparseLayer):
     def merge_hypercube(self, x):
         hdim = self.hdim
         s = self._shape
-        x = x.reshape(x.shape[0], 2**hdim, hdim+1, s[0]//2**hdim, *x.shape[2:])
+        unfolded_shape = (x.shape[0], 2**hdim, hdim+1, s[0]//2**hdim, *x.shape[2:])
+        output_shape = (x.shape[0], s[0], *x.shape[2:])
+        
+        x = x.reshape(unfolded_shape)
         out = x.clone()
-        for ind in range(2**hdim):
-            for d in range(hdim):
-                out_ind = ind ^ (1 << d)  # Neighbour on the hypercube
-                out[:, out_ind, d+1] = x[:, ind, d+1]
-        out = out.sum(axis=2).reshape(x.shape[0], s[0], *x.shape[4:])
+        for d in range(hdim):
+            mid_shape = unfolded_shape[0:1] + (2**(hdim-d-1), 2, 2**d) + unfolded_shape[3:]
+            t = x[:, :, d+1].reshape(mid_shape)
+            t = torch.roll(t, 1, dims=2)
+            out[:, :, d+1] = t.reshape(unfolded_shape[0:2] + unfolded_shape[3:])
+        out = out.sum(axis=2).reshape(output_shape)
         return out
 
 
